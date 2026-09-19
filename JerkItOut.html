@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="uk">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dance to the Rhythm</title>
+        <link rel="stylesheet" href="style.css">
+        <link rel="stylesheet" href="smaragd.css">
+        <style>
+            .end-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 1000; }
+            .end-modal.visible { display: flex; }
+            .end-modal-content { background: #340154; padding: 20px; border-radius: 10px; text-align: center; width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+            .end-modal-content h2 { margin: 0 0 8px; }
+            .end-modal-content p { margin: 0 0 12px; }
+            .end-modal-actions button { margin: 6px; padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; }
+            .end-modal-actions .primary { background: #4caf50; color: white; }
+            .end-modal-actions .secondary { background: #e0e0e0; }
+        </style>
+    </head>
+    <body>
+        <button class="menu-button" id="mainMenuBtn" type="button">На головне меню</button>
+
+        <div class="game">
+            <h1>Dance to the Rhythm</h1>
+            <p class="subtitle">Натискай стрілки в потрібний момент</p>
+            <div class="screen">
+                <div class="background"></div>
+                <div class="game-info">
+                    <span>
+                        COMBO:
+                        <span id="combo">0</span>
+                    </span>
+                    <span>
+                        SCORE:
+                        <span id="score">000000</span>
+                    </span>
+                </div>
+                <div class="lanes">
+                    <div class="lane"></div>
+                    <div class="lane"></div>
+                    <div class="lane"></div>
+                    <div class="lane"></div>
+                </div>
+                <div class="hit-line"></div>
+                <div class="lane-controls">
+                    <button class="lane-button" data-lane="0">←</button>
+                    <button class="lane-button" data-lane="1">↓</button>
+                    <button class="lane-button" data-lane="2">↑</button>
+                    <button class="lane-button" data-lane="3">→</button>
+                </div>
+            </div>
+            <div class="buttons">
+                <button class="arrow-button">←</button>
+                <button class="arrow-button">↓</button>
+                <button class="arrow-button">↑</button>
+                <button class="arrow-button">→</button>
+            </div>
+                <div class="stats">
+                <span>
+                    Точність:
+                    <span id="accuracy">100%</span>
+                </span>
+                <span>
+                    Помилки:
+                    <span id="misses">0</span>
+                </span>
+                <span>
+                    Час:
+                    <span id="timeLeft">03:00</span>
+                </span>
+            </div>
+
+            <div id="message" class="message"></div>
+
+            <div class="control-buttons">
+                <button class="start-button" id="startButton">Почати гру</button>
+                <button class="stop-button" id="stopButton" disabled>Стоп</button>
+            </div>
+
+            <div class="volume-panel" aria-label="Гучність музики">
+                <label for="volumeControl">Гучність</label>
+                <input id="volumeControl" type="range" min="0" max="1" step="0.05" value="0.8" />
+            </div>
+
+            <audio id="bgAudio" src="музика/Jerk It Out .mp3" preload="metadata"></audio>
+
+            <div id="endModal" class="end-modal" aria-hidden="true">
+                <div class="end-modal-content" role="dialog" aria-modal="true">
+                    <h2 id="endModalTitle">Вітаємо!</h2>
+                    <p id="endModalMsg">Раунд завершено.</p>
+                    <div class="end-modal-actions">
+                        <button id="playAgainBtn" class="primary">Грати ще раз</button>
+                        <button id="closeModalBtn" class="secondary">Закрити</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <script>
+            const bpm = 130;
+            const gameFactor = bpm / 120;
+            const lowBpmEase = bpm < 120 ? 0.9 : 1;
+            const spawnIntervalMs = Math.max(160, (250 / gameFactor) * (bpm < 120 ? 1.12 : 1));
+            const noteSpeed = 380 * gameFactor * lowBpmEase;
+            const timingWindowBase = Math.max(26, (40 / gameFactor) * (bpm < 120 ? 1.18 : 1));
+
+            const beatOffsetMs = 0;
+            const beatIntervalMs = bpm > 0 ? 60000 / bpm : null;
+            const buttons = document.querySelectorAll('.arrow-button');
+            const laneButtons = document.querySelectorAll('.lane-button');
+            const physicalKeyMap = {
+                ArrowLeft: 0,
+                ArrowDown: 1,
+                ArrowUp: 2,
+                ArrowRight: 3,
+                KeyA: 0,
+                KeyS: 1,
+                KeyW: 2,
+                KeyD: 3
+            };
+            const lanes = document.querySelectorAll('.lane');
+
+            const screenEl = document.querySelector('.screen');
+            const comboText = document.getElementById('combo');
+            const scoreText = document.getElementById('score');
+            const missesText = document.getElementById('misses');
+            const accuracyText = document.getElementById('accuracy');
+            const timeLeftText = document.getElementById('timeLeft');
+            const message = document.getElementById('message');
+            const startButton = document.getElementById('startButton');
+            const stopButton = document.getElementById('stopButton');
+            const mainMenuBtn = document.getElementById('mainMenuBtn');
+            const volumeControl = document.getElementById('volumeControl');
+            const bgAudio = document.getElementById('bgAudio');
+            const endModal = document.getElementById('endModal');
+            const endModalTitle = document.getElementById('endModalTitle');
+            const endModalMsg = document.getElementById('endModalMsg');
+            const playAgainBtn = document.getElementById('playAgainBtn');
+            const closeModalBtn = document.getElementById('closeModalBtn');
+
+            let combo = 0;
+            let score = 0;
+            let misses = 0;
+            let hits = 0;
+            let totalNotes = 0;
+            let notes = [];
+            let activeGroups = [];
+            let lastTime = null;
+            let spawnTimer = null;
+            let finaleTriggered = false;
+
+            let playing = false;
+            const roundDurationMs = 3 * 60 * 1000; 
+            const missesLimit = 100;
+            let roundTimeout = null;
+            let timeTickInterval = null;
+
+            window.addEventListener('error', (ev) => {
+                try { message.textContent = 'Error: ' + (ev.message || ev.error || 'unknown'); message.style.color = '#ff3333'; } catch (e) {}
+                console.error('Window error', ev);
+            });
+            window.addEventListener('unhandledrejection', (ev) => {
+                try { message.textContent = 'Promise rejection: ' + (ev.reason && ev.reason.message ? ev.reason.message : ev.reason); message.style.color = '#ff3333'; } catch (e) {}
+                console.error('Unhandled rejection', ev);
+            });
+
+            function formatScore(n) { return n.toString().padStart(6, '0'); }
+            function formatTime(ms) {
+                const s = Math.max(0, Math.ceil(ms / 1000));
+                const m = Math.floor(s / 60); const sec = s % 60;
+                return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+            }
+
+            function createNote(laneIndex) {
+                const laneEl = lanes[laneIndex];
+                const noteEl = document.createElement('div');
+                noteEl.className = 'note';
+                const arrows = ['←','↓','↑','→'];
+                noteEl.textContent = arrows[laneIndex];
+                noteEl.style.left = '50%';
+                noteEl.style.top = '-60px';
+                laneEl.appendChild(noteEl);
+                const note = { el: noteEl, lane: laneIndex, y: -60, height: 50, speed: noteSpeed * gameFactor, hit: false, groupId: null };
+                notes.push(note);
+                totalNotes++;
+                return note;
+            }
+
+            function spawnNote(laneIndex) {
+                const note = createNote(laneIndex);
+                return note;
+            }
+
+            function spawnPattern(laneIndexes) {
+                const pattern = {
+                    id: Date.now() + Math.random(),
+                    lanes: [...laneIndexes],
+                    notes: [],
+                    hitLanes: new Set(),
+                    resolved: false,
+                    missed: false
+                };
+
+                laneIndexes.forEach((laneIndex) => {
+                    const note = createNote(laneIndex);
+                    note.groupId = pattern.id;
+                    pattern.notes.push(note);
+                });
+
+                activeGroups.push(pattern);
+                return pattern;
+            }
+
+            function tryResolvePatternGroup(group) {
+                if (!group || group.resolved) return;
+
+                if (group.hitLanes.size === group.lanes.length) {
+                    group.resolved = true;
+                    const reward = 120 + group.lanes.length * 50;
+                    score += reward;
+                    combo += 1;
+                    message.textContent = group.lanes.length === 4 ? 'PERFECT!' : group.lanes.length === 2 ? 'DOUBLE!' : 'GOOD!';
+                    message.style.color = '#7cffb2';
+
+                    group.notes.forEach((note) => {
+                        if (note.el && note.el.parentNode) {
+                            note.el.remove();
+                        }
+                        notes = notes.filter((item) => item !== note);
+                    });
+
+                    activeGroups = activeGroups.filter((item) => item.id !== group.id);
+                    updateUI();
+                }
+            }
+
+            buttons.forEach((button, index) => { button.addEventListener('click', () => triggerHit(index)); });
+            laneButtons.forEach((button) => { const idx = Number(button.dataset.lane); button.addEventListener('click', () => triggerHit(idx)); });
+            document.addEventListener('keydown', (e) => {
+                const idx = physicalKeyMap[e.code];
+                if (idx !== undefined) {
+                    e.preventDefault();
+                    triggerHit(idx);
+                }
+            }, { passive: false });
+
+            const hitboxOffset = -20;
+
+            function getButtonRectForLane(laneIndex) {
+                const lb = document.querySelector(`.lane-button[data-lane="${laneIndex}"]`);
+                const screenRect = screenEl.getBoundingClientRect();
+                if (!lb) return { top: screenEl.clientHeight - 120, bottom: screenEl.clientHeight - 80, left: 0, right: screenEl.clientWidth, height: 40 };
+                const rect = lb.getBoundingClientRect();
+                return {
+                    top: rect.top - screenRect.top + hitboxOffset,
+                    bottom: rect.bottom - screenRect.top + hitboxOffset,
+                    left: rect.left - screenRect.left,
+                    right: rect.right - screenRect.left,
+                    height: rect.height
+                };
+            }
+
+            function triggerHit(laneIndex) {
+                if (!playing) return;
+                try { if (laneButtons && laneButtons[laneIndex] && laneButtons[laneIndex].disabled) return; } catch(e) {}
+                try { if (buttons[laneIndex]) { buttons[laneIndex].classList.add('active'); setTimeout(() => buttons[laneIndex].classList.remove('active'), 100); } } catch(e){}
+                try { const lb = document.querySelector(`.lane-button[data-lane="${laneIndex}"]`); if (lb) { lb.classList.add('active'); setTimeout(() => lb.classList.remove('active'), 100); } } catch(e){}
+
+                const timingWindow = timingWindowBase * gameFactor;
+                const btn = getButtonRectForLane(laneIndex);
+
+                const matchingGroup = activeGroups.find((group) => !group.resolved && group.lanes.includes(laneIndex));
+                if (matchingGroup) {
+                    const note = matchingGroup.notes.find((item) => item.lane === laneIndex && !item.hit);
+                    if (!note) return;
+
+                    const noteTop = note.y;
+                    const noteBottom = note.y + note.height;
+                    const dist = noteTop > btn.bottom ? noteTop - btn.bottom : (noteBottom < btn.top ? btn.top - noteBottom : 0);
+
+                    if (dist <= timingWindow) {
+                        if (matchingGroup.hitLanes.has(laneIndex)) return;
+                        matchingGroup.hitLanes.add(laneIndex);
+                        note.hit = true;
+                        note.el.remove();
+                        notes = notes.filter((item) => item !== note);
+                        tryResolvePatternGroup(matchingGroup);
+                        updateUI();
+                        return;
+                    }
+                }
+
+                let closest = null; let bestDist = Infinity;
+                for (const n of notes) {
+                    if (n.lane !== laneIndex || n.hit || n.disabled || n.groupId) continue;
+                    const noteTop = n.y;
+                    const noteBottom = n.y + n.height;
+                    const dist = noteTop > btn.bottom ? noteTop - btn.bottom : (noteBottom < btn.top ? btn.top - noteBottom : 0);
+                    if (dist < bestDist) { bestDist = dist; closest = n; }
+                }
+
+                if (closest && bestDist <= timingWindow) {
+                    closest.hit = true; hits++; combo++;
+                    const accuracyFactor = Math.max(0, 1 - bestDist / timingWindow);
+                    const gained = Math.round(100 * (0.5 + accuracyFactor * 0.5));
+                    score += gained;
+                    message.textContent = 'GOOD!'; message.style.color = '#7cffb2'; updateUI();
+                    closest.el.remove(); notes = notes.filter(x => x !== closest);
+                } else {
+                    if (closest) {
+                        const noteTop = closest.y; const noteBottom = closest.y + closest.height;
+                        if (noteBottom < btn.top - timingWindow) {
+                            message.textContent = 'EARLY'; message.style.color = '#ffd86b';
+                            return;
+                        }
+                        try {
+                            closest.disabled = true;
+                            closest.el.classList.add('disabled');
+                            setTimeout(() => { try { closest.el.remove(); notes = notes.filter(x => x !== closest); } catch(e){} }, 800);
+                        } catch(e) {}
+                    }
+                    misses++; combo = 0; message.textContent = 'MISS!'; message.style.color = '#ff6b6b'; updateUI();
+                    if (misses >= missesLimit) endRound('too many misses');
+                }
+            }
+
+            function updateUI(remainingMs) {
+                comboText.textContent = combo;
+                scoreText.textContent = formatScore(score);
+                missesText.textContent = misses;
+                const acc = totalNotes === 0 ? 100 : Math.round((hits / totalNotes) * 100);
+                accuracyText.textContent = acc + '%';
+                if (typeof remainingMs === 'number') timeLeftText.textContent = formatTime(remainingMs);
+            }
+
+            function gameLoop(ts) {
+                if (!playing) return;
+                if (!lastTime) lastTime = ts; const dt = (ts - lastTime) / 1000; lastTime = ts;
+
+                for (const group of [...activeGroups]) {
+                    if (group.resolved) continue;
+                    const pendingNotes = group.notes.filter((n) => !n.hit);
+                    if (pendingNotes.length === 0) {
+                        activeGroups = activeGroups.filter((item) => item.id !== group.id);
+                        continue;
+                    }
+
+                    const failedNote = pendingNotes.find((n) => {
+                        const btnRect = getButtonRectForLane(n.lane);
+                        return n.y > btnRect.bottom + 10;
+                    });
+
+                    if (failedNote) {
+                        group.resolved = true;
+                        group.missed = true;
+                        pendingNotes.forEach((n) => {
+                            n.hit = true;
+                            if (n.el && n.el.parentNode) n.el.remove();
+                            notes = notes.filter((item) => item !== n);
+                        });
+                        misses++; combo = 0; message.textContent = 'MISS!'; message.style.color = '#ff6b6b'; updateUI();
+                        activeGroups = activeGroups.filter((item) => item.id !== group.id);
+                        if (misses >= missesLimit) { endRound('too many misses'); return; }
+                    }
+                }
+
+                for (const n of [...notes]) {
+                    n.y += n.speed * dt; n.el.style.top = n.y + 'px';
+                    const noteTop = n.y;
+                    const noteBottom = n.y + n.height;
+                    const btnRect = getButtonRectForLane(n.lane);
+                    if (!n.hit && noteTop > btnRect.bottom + 10) {
+                        n.disabled = true; n.hit = true; try { n.el.classList.add('disabled'); } catch(e) {}
+                        misses++; combo = 0; message.textContent = 'MISS!'; message.style.color = '#ff6b6b'; updateUI();
+                        setTimeout(() => { try { n.el.remove(); notes = notes.filter(x => x !== n); } catch(e) {} }, 800);
+                        if (misses >= missesLimit) { endRound('too many misses'); return; }
+                    } else if (n.y > screenEl.clientHeight + 100) { n.el.remove(); notes = notes.filter(x => x !== n); }
+                }
+                requestAnimationFrame(gameLoop);
+            }
+
+            function startSpawning(startedAt, durationToUse) {
+                const spawnNext = () => {
+                    const elapsed = Date.now() - startedAt;
+
+                    if (!finaleTriggered && elapsed >= durationToUse * 0.75) {
+                        finaleTriggered = true;
+                        spawnPattern([0, 1, 2, 3]);
+                        updateUI();
+                        return;
+                    }
+
+                    const roll = Math.random();
+                    if (roll < 0.16) {
+                        const comboPattern = [
+                            [0, 1],
+                            [1, 2],
+                            [2, 3],
+                            [0, 3],
+                            [0, 2],
+                            [1, 3]
+                        ][Math.floor(Math.random() * 6)];
+                        spawnPattern(comboPattern);
+                    } else {
+                        spawnNote(Math.floor(Math.random() * lanes.length));
+                    }
+                    updateUI();
+                };
+
+                if (beatIntervalMs) {
+                    const interval = beatIntervalMs; const offset = ((beatOffsetMs % interval) + interval) % interval;
+                    setTimeout(() => {
+                        spawnNext();
+                        spawnTimer = setInterval(() => {
+                            spawnNext();
+                        }, interval);
+                    }, offset);
+                } else {
+                    spawnTimer = setInterval(() => {
+                        spawnNext();
+                    }, spawnIntervalMs);
+                }
+            }
+
+            function stopSpawning() { if (spawnTimer) { clearInterval(spawnTimer); spawnTimer = null; } }
+
+            function endRound(reason) {
+                if (!playing) return;
+                playing = false;
+                stopSpawning();
+                if (roundTimeout) { clearTimeout(roundTimeout); roundTimeout = null; }
+                if (timeTickInterval) { clearInterval(timeTickInterval); timeTickInterval = null; }
+                stopButton.disabled = true;
+                stopButton.style.display = 'none';
+                startButton.style.display = 'inline-block';
+                startButton.disabled = false;
+
+                try { if (bgAudio) { bgAudio.pause(); bgAudio.currentTime = 0; } } catch(e) {}
+                lastTime = null;
+                message.style.color = '#ffd86b';
+                let reasonText = '';
+                if (reason === 'too many misses') reasonText = `Гру завершено — забагато помилок (${misses}). `;
+                else if (reason === 'stopped') reasonText = 'Гра зупинена. ';
+                const summary = `${reasonText}Підсумок: ${scoreText.textContent} очок.`;
+                message.textContent = summary + ' Натисніть \"Почати гру\" щоб зіграти ще.';
+                startButton.textContent = 'Грати ще раз';
+                if (reason === 'time') {
+                    try {
+                        endModalTitle.textContent = 'Вітаємо!';
+                        endModalMsg.textContent = `Раунд завершено. Ваш рахунок: ${scoreText.textContent} очок.`;
+                        endModal.classList.add('visible'); endModal.setAttribute('aria-hidden','false');
+                    } catch(e) {}
+                }
+            }
+
+            try {
+                playAgainBtn.addEventListener('click', () => {
+                    endModal.classList.remove('visible'); endModal.setAttribute('aria-hidden','true');
+                    startRound();
+                });
+                closeModalBtn.addEventListener('click', () => {
+                    endModal.classList.remove('visible'); endModal.setAttribute('aria-hidden','true');
+                });
+                endModal.addEventListener('click', (e) => { if (e.target === endModal) { endModal.classList.remove('visible'); endModal.setAttribute('aria-hidden','true'); } });
+            } catch(e) {}
+
+            function startRound() {
+                combo = 0; score = 0; misses = 0; hits = 0; totalNotes = 0; finaleTriggered = false; for (const n of notes) n.el.remove(); notes = []; activeGroups = []; lastTime = null; updateUI(roundDurationMs);
+                try { if (laneButtons) { laneButtons.forEach(b => { b.disabled = false; b.classList.remove('disabled'); }); } } catch(e) {}
+                if (bgAudio) {
+                    bgAudio.volume = Number(volumeControl.value);
+                }
+                if (spawnTimer) stopSpawning();
+                playing = true;
+                const startedAt = Date.now();
+                const durationToUse = (bgAudio && isFinite(bgAudio.duration) && bgAudio.duration > 0) ? Math.round(bgAudio.duration * 1000) : roundDurationMs;
+                startSpawning(startedAt, durationToUse);
+                stopButton.disabled = false;
+                stopButton.style.display = 'inline-block';
+                startButton.style.display = 'none';
+                startButton.textContent = 'Гра йде...';
+                message.textContent = 'Гра почалась!'; message.style.color = '#d64c9b';
+
+                roundTimeout = setTimeout(() => { endRound('time'); }, durationToUse);
+                if (timeTickInterval) clearInterval(timeTickInterval);
+                timeTickInterval = setInterval(() => {
+                    const elapsed = Date.now() - startedAt;
+                    const remaining = Math.max(0, durationToUse - elapsed);
+                    updateUI(remaining);
+                }, 250);
+
+                try { if (bgAudio) { bgAudio.currentTime = 0; bgAudio.play().catch(()=>{}); bgAudio.onended = () => endRound('time'); } } catch(e) {}
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            startButton.addEventListener('click', () => {
+                if (bgAudio && (!isFinite(bgAudio.duration) || bgAudio.duration === 0)) {
+                    const onMeta = () => { startRound(); bgAudio.removeEventListener('loadedmetadata', onMeta); };
+                    bgAudio.addEventListener('loadedmetadata', onMeta, { once: true });
+                    try { bgAudio.load(); } catch(e) {}
+                    try { bgAudio.play().catch(() => {}); } catch(e) {}
+                } else {
+                    startRound();
+                }
+            });
+            stopButton.addEventListener('click', () => { endRound('stopped'); });
+
+            volumeControl.addEventListener('input', () => {
+                if (bgAudio) {
+                    bgAudio.volume = Number(volumeControl.value);
+                }
+            });
+
+            function goToMainMenu() {
+                if (roundTimeout) clearTimeout(roundTimeout);
+                if (timeTickInterval) clearInterval(timeTickInterval);
+                stopSpawning();
+                playing = false;
+                lastTime = null;
+                try { if (bgAudio) { bgAudio.pause(); bgAudio.currentTime = 0; } } catch (e) {}
+                window.location.href = 'Index.html';
+            }
+
+            mainMenuBtn.addEventListener('click', goToMainMenu);
+        </script>
+    </body>
+</html> 
